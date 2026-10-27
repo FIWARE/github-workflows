@@ -1,0 +1,71 @@
+# Reusable workflow that opens a pull request for every chart dependency with a newer stable
+# version, with the chart version bumped as well. Meant to run on a schedule. See README.md for how
+# to call it.
+name: Chart dependencies
+
+on:
+  workflow_call:
+    inputs:
+      charts-dir:
+        description: Directory that holds one directory per chart
+        type: string
+        default: charts
+      label:
+        description: Semver label of the pull requests, and bump of the chart versions
+        type: string
+        default: patch
+      reviewers:
+        description: Comma-separated GitHub users to request a review from
+        type: string
+        default: ""
+    secrets:
+      token:
+        description: >-
+          Token to push the branches and open the pull requests with (default: the workflow token).
+          Pull requests opened with the workflow token do not run their checks; a GitHub App or
+          personal token does.
+        required: false
+
+jobs:
+  update:
+    name: Update chart dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.token || github.token }}
+          path: repo
+
+      - name: Check out the update scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: chart-workflows
+          persist-credentials: false
+
+      - name: Install crane
+        env:
+          CRANE_VERSION: v0.22.1
+        run: |
+          curl -sSfL "https://github.com/google/go-containerregistry/releases/download/$CRANE_VERSION/go-containerregistry_Linux_x86_64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin crane
+          crane version
+
+      - name: Open the pull requests
+        working-directory: repo
+        env:
+          GH_TOKEN: ${{ secrets.token || github.token }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          LABEL: ${{ inputs.label }}
+          REVIEWERS: ${{ inputs.reviewers }}
+          CHARTS_DIR: ${{ inputs.charts-dir }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          ../chart-workflows/scripts/update-chart-dependencies.sh
