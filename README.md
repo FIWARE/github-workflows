@@ -2,6 +2,32 @@
 
 Reusable GitHub Actions workflows shared by FIWARE repositories, so that a fix is made in one place.
 
+| Workflow | What it does | Typical trigger |
+|---|---|---|
+| [`chart-lint.yml`](#chart-lint-chart-lintyml) | Lints the Helm charts and validates what they render | Pull requests |
+| [`chart-pr.yml`](#chart-version-chart-pryml) | Requires a semver label and bumps the versions of the changed charts | Pull requests |
+| [`chart-release.yml`](#chart-release-chart-releaseyml) | Publishes the charts, failing when a changed chart has no new version | Push to the main branch |
+| [`chart-dependencies.yml`](#chart-dependencies-chart-dependenciesyml) | Opens pull requests for newer chart dependencies | Schedule |
+| [`stale.yml`](#stale-issues-staleyml) | Marks and closes issues and pull requests without activity | Schedule |
+
+Together, the chart workflows cover the life of a chart: a pull request is linted and gets its new version, and merging it publishes that version.
+
+## Chart lint (`chart-lint.yml`)
+
+Lints every chart under `charts/` (the directories with a `Chart.yaml`) with `helm lint`, then builds its dependencies, renders it and validates the result with `kubeconform -strict`, against the Kubernetes schemas and the [CRDs catalog](https://github.com/datreeio/CRDs-catalog). Each `<chart>/ci/*-values.yaml` is rendered and validated as well, to cover what the default values leave off; with those, custom resources that are not in the catalog are skipped. Every chart is checked before the result is reported.
+
+```yaml
+jobs:
+  chart-lint:
+    uses: FIWARE/github-workflows/.github/workflows/chart-lint.yml@v1
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `charts-dir` | `charts` | Directory that holds one directory per chart |
+| `helm-version` | `v3.17.3` | Helm version |
+| `kubeconform-version` | `v0.7.0` | kubeconform version |
+
 ## Chart version (`chart-pr.yml`)
 
 For repositories that release Helm charts from a `charts/` directory, with the version of each chart driven by the semver label of the pull request that changes it. On every pull request it:
@@ -46,7 +72,93 @@ Inputs, both optional:
 
 Pushes made with the workflow token do not trigger workflows, so the checks of the pull request keep running on the commit before the version bump.
 
-### Versions
+## Chart release (`chart-release.yml`)
+
+Publishes the charts when the main branch changes:
+
+1. **checks the versions first**: a chart that the push changed without changing its version fails the workflow, naming it, before anything is published. Such a change would otherwise never be released, since the version is already published;
+2. publishes every chart version that is not released yet as a GitHub release, and updates the Helm repository index on GitHub Pages, with [chart-releaser](https://github.com/helm/chart-releaser-action);
+3. optionally, pushes them to an OCI registry, each version once.
+
+The repositories the charts' dependencies come from are added from their `Chart.yaml`.
+
+```yaml
+on:
+  push:
+    branches: [main]
+
+jobs:
+  chart-release:
+    uses: FIWARE/github-workflows/.github/workflows/chart-release.yml@v1
+    permissions:
+      contents: write
+    with:
+      oci-registry: quay.io/fiware/helm-charts      # optional
+    secrets:
+      oci-username: ${{ secrets.QUAY_USERNAME }}
+      oci-password: ${{ secrets.QUAY_PASSWORD }}
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `charts-dir` | `charts` | Directory that holds one directory per chart |
+| `exclude` | `<charts-dir>/README.md` | Space-separated paths that never count as a chart change |
+| `helm-version` | `v3.17.3` | Helm version to package the charts with |
+| `oci-registry` | (none) | OCI registry and path to push to as well, without `oci://`; needs the `oci-username` and `oci-password` secrets |
+| `oci-charts` | all | Space-separated charts to push to the OCI registry |
+
+## Chart dependencies (`chart-dependencies.yml`)
+
+Looks up the latest stable version of every chart dependency that comes from a Helm repository or an OCI registry. For each one that is outdated it pushes a branch `bump/<chart>-<dependency>-<version>` with the new dependency version and the chart version bumped by the label, and opens a pull request with that label. A dependency that already has an open pull request, for any version, is left alone until it is merged or closed.
+
+```yaml
+on:
+  schedule:
+    - cron: '0 6 * * 3'
+  workflow_dispatch:
+
+jobs:
+  chart-dependencies:
+    uses: FIWARE/github-workflows/.github/workflows/chart-dependencies.yml@v1
+    permissions:
+      contents: write
+      pull-requests: write
+    with:
+      reviewers: someone,someone-else
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `charts-dir` | `charts` | Directory that holds one directory per chart |
+| `label` | `patch` | Semver label of the pull requests, and bump of the chart version |
+| `reviewers` | (none) | Comma-separated GitHub users to request a review from |
+
+The chart version is bumped in the pull request itself because pull requests opened with the workflow token do not run their checks, `chart-pr.yml` included. To have the checks run, pass a GitHub App or personal token as the `token` secret.
+
+## Stale issues (`stale.yml`)
+
+Marks issues and pull requests without activity as stale, and closes them when they stay so, with [actions/stale](https://github.com/actions/stale).
+
+```yaml
+on:
+  schedule:
+    - cron: '30 1 * * *'
+  workflow_dispatch:
+
+jobs:
+  stale:
+    uses: FIWARE/github-workflows/.github/workflows/stale.yml@v1
+    permissions:
+      issues: write
+      pull-requests: write
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `days-before-stale` | `30` | Days without activity before an issue or pull request is marked as stale |
+| `days-before-close` | `5` | Days a stale issue or pull request stays open before it is closed |
+
+## Versions
 
 Callers use the `v1` tag, which moves with every compatible release (`v1.0.1`, `v1.1.0`, ...). A change that needs callers to change their call gets a new major tag. Callers that want to update by hand pin an exact release (`@v1.0.1`) or its commit instead.
 
@@ -69,8 +181,8 @@ Recommended repository settings:
 
 ```shell
 shellcheck scripts/*.sh
-bats tests
+bats tests        # the lint and eval tests need helm and kubeconform, and skip themselves without them
 actionlint
 ```
 
-The workflow checks out `scripts/` from its own commit (`job.workflow_sha`), so a caller pointing to a branch of this repository runs that branch's script too.
+Each workflow checks out `scripts/` from its own commit (`job.workflow_sha`), so a caller pointing to a branch of this repository runs that branch's scripts too.

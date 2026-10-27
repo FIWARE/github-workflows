@@ -34,6 +34,17 @@ jobs:
       - name: Lint the scripts
         run: shellcheck scripts/*.sh
 
+      # for the lint and eval tests, which skip themselves without them
+      - name: Install Helm
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.17.3
+
+      - name: Install kubeconform
+        run: |
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+
       - name: Test the scripts
         run: |
           sudo apt-get install --yes --no-install-recommends bats >/dev/null

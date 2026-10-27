@@ -1,6 +1,7 @@
 paths:
-  .github/workflows/chart-pr.yml:
+  .github/workflows/*.yml:
     ignore:
-      # documented job context properties that actionlint does not know yet:
+      # documented job context properties that actionlint does not know yet, used by the reusable
+      # workflows to check out their own scripts:
       # https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#job-context
       - 'property "workflow_(repository|sha)" is not defined'
