@@ -1,0 +1,132 @@
+# Reusable workflow that publishes the Helm charts of a repository when its main branch changes: as
+# GitHub releases and a GitHub Pages index (chart-releaser), and optionally to an OCI registry. It
+# fails, before publishing anything, when a chart changed without a new version, which would
+# otherwise never be released. See README.md for how to call it.
+name: Chart release
+
+on:
+  workflow_call:
+    inputs:
+      charts-dir:
+        description: Directory that holds one directory per chart
+        type: string
+        default: charts
+      exclude:
+        description: Space-separated paths that never count as a chart change (default <charts-dir>/README.md)
+        type: string
+        default: ""
+      helm-version:
+        description: Helm version to package the charts with
+        type: string
+        default: v3.17.3
+      oci-registry:
+        description: OCI registry and path to push the charts to as well, without oci:// (e.g. quay.io/fiware/helm-charts); empty to skip
+        type: string
+        default: ""
+      oci-charts:
+        description: Space-separated charts to push to the OCI registry (default all)
+        type: string
+        default: ""
+    secrets:
+      oci-username:
+        description: User for the OCI registry
+        required: false
+      oci-password:
+        description: Password or token for the OCI registry
+        required: false
+
+jobs:
+  check-versions:
+    name: Check chart versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+          path: repo
+
+      - name: Check out the release scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: chart-workflows
+          persist-credentials: false
+
+      - name: Every changed chart has a new version
+        working-directory: repo
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          CHARTS_DIR: ${{ inputs.charts-dir }}
+          EXCLUDE: ${{ inputs.exclude }}
+        run: ../chart-workflows/scripts/check-chart-versions.sh
+
+  release:
+    name: Release the charts
+    needs: check-versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Check out the release scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .chart-workflows
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: ${{ inputs.helm-version }}
+
+      - name: Add the dependency repositories
+        env:
+          CHARTS_DIR: ${{ inputs.charts-dir }}
+        run: .chart-workflows/scripts/add-helm-repos.sh
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # every version once: the versions already released are skipped, and check-versions made sure
+      # that a changed chart has a new one
+      - name: Release the charts
+        uses: helm/chart-releaser-action@cae68fefc6b5f367a0275617c9f83181ba54714f # v1.7.0
+        with:
+          charts_dir: ${{ inputs.charts-dir }}
+          skip_existing: true
+        env:
+          CR_TOKEN: ${{ github.token }}
+
+      - name: Log in to the OCI registry
+        if: inputs.oci-registry != ''
+        env:
+          REGISTRY: ${{ inputs.oci-registry }}
+          OCI_USERNAME: ${{ secrets.oci-username }}
+          OCI_PASSWORD: ${{ secrets.oci-password }}
+        run: |
+          if [ -z "$OCI_USERNAME" ] || [ -z "$OCI_PASSWORD" ]; then
+            echo "::error::oci-registry is set, but the oci-username and oci-password secrets are not"
+            exit 1
+          fi
+          printf '%s' "$OCI_PASSWORD" | helm registry login "${REGISTRY%%/*}" --username "$OCI_USERNAME" --password-stdin
+
+      - name: Push the charts to the OCI registry
+        if: inputs.oci-registry != ''
+        env:
+          REGISTRY: ${{ inputs.oci-registry }}
+          CHARTS: ${{ inputs.oci-charts }}
+          CHARTS_DIR: ${{ inputs.charts-dir }}
+        run: .chart-workflows/scripts/publish-oci.sh
