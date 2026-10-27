@@ -2,6 +2,8 @@
 
 Reusable GitHub Actions workflows shared by FIWARE repositories, so that a fix is made in one place.
 
+The repository lives in the SEAMWARE organization until it moves to FIWARE; callers then change the owner in `uses:`.
+
 | Workflow | What it does | Typical trigger |
 |---|---|---|
 | [`chart-lint.yml`](#chart-lint-chart-lintyml) | Lints the Helm charts and validates what they render | Pull requests |
@@ -19,7 +21,7 @@ Lints every chart under `charts/` (the directories with a `Chart.yaml`) with `he
 ```yaml
 jobs:
   chart-lint:
-    uses: FIWARE/github-workflows/.github/workflows/chart-lint.yml@v1
+    uses: SEAMWARE/github-workflows/.github/workflows/chart-lint.yml@v1
 ```
 
 | Input | Default | Description |
@@ -57,7 +59,7 @@ jobs:
 
   chart-version:
     needs: [lint]                # whatever has to pass first
-    uses: FIWARE/github-workflows/.github/workflows/chart-pr.yml@v1
+    uses: SEAMWARE/github-workflows/.github/workflows/chart-pr.yml@v1
     permissions:
       contents: write            # push the new versions to the pull request branch
       pull-requests: write       # comment when the label is missing
@@ -89,7 +91,7 @@ on:
 
 jobs:
   chart-release:
-    uses: FIWARE/github-workflows/.github/workflows/chart-release.yml@v1
+    uses: SEAMWARE/github-workflows/.github/workflows/chart-release.yml@v1
     permissions:
       contents: write
     with:
@@ -119,7 +121,7 @@ on:
 
 jobs:
   chart-dependencies:
-    uses: FIWARE/github-workflows/.github/workflows/chart-dependencies.yml@v1
+    uses: SEAMWARE/github-workflows/.github/workflows/chart-dependencies.yml@v1
     permissions:
       contents: write
       pull-requests: write
@@ -147,7 +149,7 @@ on:
 
 jobs:
   stale:
-    uses: FIWARE/github-workflows/.github/workflows/stale.yml@v1
+    uses: SEAMWARE/github-workflows/.github/workflows/stale.yml@v1
     permissions:
       issues: write
       pull-requests: write
