@@ -1,0 +1,95 @@
+# Reusable workflow that lints the Helm charts of a repository and validates what they render with
+# kubeconform, with the default values and with each <chart>/ci/*-values.yaml. See README.md for how
+# to call it.
+name: Chart lint
+
+on:
+  workflow_call:
+    inputs:
+      charts-dir:
+        description: Directory that holds one directory per chart
+        type: string
+        default: charts
+      helm-version:
+        description: Helm version to lint and render the charts with
+        type: string
+        default: v3.17.3
+      kubeconform-version:
+        description: kubeconform version to validate the rendered charts with
+        type: string
+        default: v0.7.0
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint the charts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          path: repo
+
+      - name: Check out the lint scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: chart-workflows
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: ${{ inputs.helm-version }}
+
+      - name: Lint
+        working-directory: repo
+        env:
+          CHARTS_DIR: ${{ inputs.charts-dir }}
+        run: ../chart-workflows/scripts/lint-charts.sh
+
+  eval:
+    name: Validate the rendered charts
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          path: repo
+
+      - name: Check out the lint scripts
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: chart-workflows
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: ${{ inputs.helm-version }}
+
+      - name: Install kubeconform
+        env:
+          KUBECONFORM_VERSION: ${{ inputs.kubeconform-version }}
+        run: |
+          curl -sSfL "https://github.com/yannh/kubeconform/releases/download/$KUBECONFORM_VERSION/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      - name: Add the dependency repositories
+        working-directory: repo
+        env:
+          CHARTS_DIR: ${{ inputs.charts-dir }}
+        run: ../chart-workflows/scripts/add-helm-repos.sh
+
+      - name: Validate
+        working-directory: repo
+        env:
+          CHARTS_DIR: ${{ inputs.charts-dir }}
+        run: ../chart-workflows/scripts/eval-charts.sh
