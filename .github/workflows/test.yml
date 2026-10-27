@@ -2,9 +2,20 @@ name: Test
 
 on:
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
   push:
     branches:
       - main
+
+# one run per pull request: opening one with a label fires two events at once
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -27,3 +38,14 @@ jobs:
         run: |
           sudo apt-get install --yes --no-install-recommends bats >/dev/null
           bats tests
+
+  # The release of a merged pull request follows its semver label, so every pull request needs one.
+  # This runs chart-pr.yml from the pull request itself: with no charts in this repository it only
+  # checks the label, and it exercises the workflow before it is released.
+  semver-label:
+    if: github.event_name == 'pull_request'
+    needs: test
+    uses: ./.github/workflows/chart-pr.yml
+    permissions:
+      contents: write
+      pull-requests: write

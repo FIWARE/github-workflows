@@ -1,0 +1,89 @@
+# Releases this repository when a pull request is merged into main: the next vX.Y.Z from the
+# pull request's semver label, the moving major tag (vX) pointed to it, and a GitHub release.
+# Also runs by hand, with an explicit version, for a release that no pull request carries (the
+# first one).
+name: Release
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, X.Y.Z without the v
+        required: true
+        type: string
+
+# releases one after the other, each reading the tags left by the previous one
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the merged commit
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Work out the version
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          INPUT_VERSION: ${{ inputs.version }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          if [ "$EVENT" = workflow_dispatch ]; then
+            if [ "$REF" != refs/heads/main ]; then
+              echo "::error::Releases are made from main, not from $REF"
+              exit 1
+            fi
+            if ! grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' <<< "$INPUT_VERSION"; then
+              echo "::error::The version has to be X.Y.Z, got '$INPUT_VERSION'"
+              exit 1
+            fi
+            version="$INPUT_VERSION"
+          else
+            bump=$(jq -r '[.[] | select(. == "major" or . == "minor" or . == "patch")] | join(" ")' <<< "$LABELS")
+            if [ "$(wc -w <<< "$bump")" -ne 1 ]; then
+              echo "::error::Not released: the pull request needs exactly one of the labels major, minor or patch (found: ${bump:-none})"
+              exit 1
+            fi
+            version=$(BUMP="$bump" scripts/next-version.sh)
+          fi
+          if git rev-parse --quiet --verify "refs/tags/v$version" >/dev/null; then
+            echo "::error::v$version already exists"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "major=v${version%%.*}" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version"
+
+      - name: Tag the release
+        env:
+          VERSION: v${{ steps.version.outputs.version }}
+          MAJOR: ${{ steps.version.outputs.major }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "$VERSION"
+          git tag -f -a "$MAJOR" -m "$MAJOR, currently $VERSION"
+          git push origin "refs/tags/$VERSION"
+          git push --force origin "refs/tags/$MAJOR"
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: v${{ steps.version.outputs.version }}
+        run: gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$VERSION"
