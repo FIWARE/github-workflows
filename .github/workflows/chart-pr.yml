@@ -1,0 +1,109 @@
+# Reusable workflow for pull requests that change Helm charts: requires a semver label (major, minor or
+# patch) and bumps the version of every chart the pull request changes, committing the result to the
+# pull request branch. See README.md for how to call it.
+name: Chart version
+
+on:
+  workflow_call:
+    inputs:
+      charts-dir:
+        description: Directory that holds one directory per chart
+        type: string
+        default: charts
+      exclude:
+        description: Space-separated paths that never count as a chart change (default <charts-dir>/README.md)
+        type: string
+        default: ""
+
+jobs:
+  semver-label:
+    name: Semver label
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    outputs:
+      bump: ${{ steps.label.outputs.bump }}
+    steps:
+      - name: Read the semver label
+        id: label
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          bumps=$(jq -r '[.[] | select(. == "major" or . == "minor" or . == "patch")] | join(" ")' <<< "$LABELS")
+          if [ "$(wc -w <<< "$bumps")" -ne 1 ]; then
+            echo "::error::The pull request needs exactly one of the labels major, minor or patch (found: ${bumps:-none})"
+            exit 1
+          fi
+          echo "bump=$bumps" >> "$GITHUB_OUTPUT"
+
+      - name: Ask for the label
+        if: failure() && steps.label.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" \
+            --body "Please apply exactly one of the following labels to the PR: 'patch', 'minor', 'major'." \
+            || echo "::warning::Could not comment on the pull request"
+
+  prepare-release:
+    name: Bump chart versions
+    needs: semver-label
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the pull request branch
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          path: pr
+
+      # the script from the same commit as this workflow, not from the caller's repository
+      - name: Locate this workflow
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$WORKFLOW_REPOSITORY" ] || [ -z "$WORKFLOW_SHA" ]; then
+            echo "::error::job.workflow_repository and job.workflow_sha are empty: this workflow has to run as a reusable workflow on github.com"
+            exit 1
+          fi
+          echo "Using $WORKFLOW_REPOSITORY@$WORKFLOW_SHA"
+
+      - name: Check out the bump script
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: chart-workflows
+          persist-credentials: false
+
+      - name: Bump the versions
+        id: bump
+        working-directory: pr
+        env:
+          BUMP: ${{ needs.semver-label.outputs.bump }}
+          BASE_REF: ${{ github.base_ref }}
+          BASE_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}
+          CHARTS_DIR: ${{ inputs.charts-dir }}
+          EXCLUDE: ${{ inputs.exclude }}
+        run: ../chart-workflows/scripts/bump-chart-versions.sh
+
+      # the workflow token cannot push to a fork
+      - name: Versions to set in a pull request from a fork
+        if: steps.bump.outputs.committed == 'true' && github.event.pull_request.head.repo.full_name != github.repository
+        working-directory: pr
+        run: |
+          echo "::error::This pull request comes from a fork, so the chart versions cannot be updated automatically. Set them in the pull request:"
+          git show --format= HEAD
+          exit 1
+
+      - name: Push the versions
+        if: steps.bump.outputs.committed == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+        working-directory: pr
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: git push origin "HEAD:refs/heads/$HEAD_REF"
