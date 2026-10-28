@@ -78,6 +78,7 @@ version() {
     [ "$(git rev-parse HEAD)" = "$head" ]
     [ "$(version a)" = 1.2.4 ]
     grep -qx "committed=false" "$GITHUB_OUTPUT"
+    grep -qx "changed=a" "$GITHUB_OUTPUT"
 }
 
 @test "a version set by hand to the expected one is kept" {

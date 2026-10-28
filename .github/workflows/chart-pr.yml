@@ -14,6 +14,10 @@ on:
         description: Space-separated paths that never count as a chart change (default <charts-dir>/README.md)
         type: string
         default: ""
+      helm-docs-version:
+        description: Version of the jnorwood/helm-docs image to regenerate the charts' README.md with, e.g. v1.14.2 (default none, no regeneration)
+        type: string
+        default: ""
 
 jobs:
   semver-label:
@@ -92,17 +96,47 @@ jobs:
           EXCLUDE: ${{ inputs.exclude }}
         run: ../chart-workflows/scripts/bump-chart-versions.sh
 
+      # after the bump, so that the documentation shows the new versions. Only the charts the pull
+      # request changes: documentation another chart left stale would change that chart without a new
+      # version, which chart-release.yml refuses.
+      - name: Regenerate the chart documentation
+        id: docs
+        if: inputs.helm-docs-version != '' && steps.bump.outputs.changed != ''
+        working-directory: pr
+        env:
+          HELM_DOCS_VERSION: ${{ inputs.helm-docs-version }}
+          CHARTS_DIR: ${{ inputs.charts-dir }}
+          CHANGED: ${{ steps.bump.outputs.changed }}
+        run: |
+          for chart in $CHANGED; do
+            docker run --rm --volume "$PWD:/helm-docs" --user "$(id -u)" "jnorwood/helm-docs:$HELM_DOCS_VERSION" \
+              --chart-search-root "$CHARTS_DIR/$chart"
+          done
+          if git diff --quiet; then
+            echo "The chart documentation is up to date"
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git add --update
+          bot_name="github-actions[bot]"
+          bot_email="41898282+github-actions[bot]@users.noreply.github.com"
+          GIT_AUTHOR_NAME="$bot_name" GIT_AUTHOR_EMAIL="$bot_email" \
+            GIT_COMMITTER_NAME="$bot_name" GIT_COMMITTER_EMAIL="$bot_email" \
+            git commit --quiet -m "Update helm documentation"
+          git show --stat --format='%s' HEAD
+          echo "committed=true" >> "$GITHUB_OUTPUT"
+
       # the workflow token cannot push to a fork
       - name: Versions to set in a pull request from a fork
-        if: steps.bump.outputs.committed == 'true' && github.event.pull_request.head.repo.full_name != github.repository
+        if: (steps.bump.outputs.committed == 'true' || steps.docs.outputs.committed == 'true') && github.event.pull_request.head.repo.full_name != github.repository
         working-directory: pr
         run: |
-          echo "::error::This pull request comes from a fork, so the chart versions cannot be updated automatically. Set them in the pull request:"
-          git show --format= HEAD
+          echo "::error::This pull request comes from a fork, so the chart versions and documentation cannot be updated automatically. Set them in the pull request:"
+          git diff "origin/$GITHUB_HEAD_REF" HEAD
           exit 1
 
       - name: Push the versions
-        if: steps.bump.outputs.committed == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+        if: (steps.bump.outputs.committed == 'true' || steps.docs.outputs.committed == 'true') && github.event.pull_request.head.repo.full_name == github.repository
         working-directory: pr
         env:
           HEAD_REF: ${{ github.head_ref }}

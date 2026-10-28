@@ -32,3 +32,21 @@ EOF
     [ "$status" -eq 0 ]
     ! grep -q "charts/b" "$BATS_TEST_TMPDIR/helm.log"
 }
+
+@test "a failed push is retried" {
+    cat >> "$BATS_TEST_TMPDIR/helm.sh" <<'EOF2'
+if [ "$1" = push ] && [ "$(grep -c '^push ' "$BATS_TEST_TMPDIR/helm.log")" -lt 2 ]; then
+    exit 1
+fi
+EOF2
+    RETRY_DELAY=0 run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ "$(grep -c '^push .*/b-2.0.0.tgz' "$BATS_TEST_TMPDIR/helm.log")" -eq 2 ]
+}
+
+@test "a push that keeps failing fails after ATTEMPTS attempts" {
+    echo 'if [ "$1" = push ]; then exit 1; fi' >> "$BATS_TEST_TMPDIR/helm.sh"
+    ATTEMPTS=2 RETRY_DELAY=0 run "$SCRIPT"
+    [ "$status" -ne 0 ]
+    [ "$(grep -c '^push ' "$BATS_TEST_TMPDIR/helm.log")" -eq 2 ]
+}

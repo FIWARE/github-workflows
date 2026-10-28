@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
-# Prints the next release version (X.Y.Z, without the v) of the repository in the current
-# directory: its highest vX.Y.Z tag bumped by BUMP, or 0.0.0 bumped when there is none. Tags that
-# are not plain vX.Y.Z, such as the moving major tags (v1) or pre-releases, are ignored.
+# Prints the next release version (X.Y.Z, without the prefix) of the repository in the current
+# directory: its highest <prefix>X.Y.Z tag bumped by BUMP, or 0.0.0 bumped when there is none. Tags
+# that are not plain <prefix>X.Y.Z, such as the moving major tags (v1) or pre-releases, are ignored.
 #
 # Environment:
-#   BUMP  major, minor or patch (required)
+#   BUMP        major, minor or patch (required)
+#   TAG_PREFIX  text the release tags start with (default: v); empty for tags like 1.2.3
 
 set -euo pipefail
 
 : "${BUMP:?BUMP must be major, minor or patch}"
 
-latest=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1 || true)
+TAG_PREFIX="${TAG_PREFIX-v}"
+
+latest=$(git tag --list "$TAG_PREFIX*" | while IFS= read -r tag; do
+    version="${tag#"$TAG_PREFIX"}"
+    if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "$version"
+    fi
+done | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1 || true)
 IFS=. read -r major minor patch <<< "${latest:-0.0.0}"
 
 case "$BUMP" in
