@@ -8,6 +8,8 @@
 #   CHARTS      space-separated chart names to push (default: every chart under CHARTS_DIR)
 #   CHARTS_DIR  directory that holds one directory per chart (default: charts)
 #   HELM        helm binary (default: helm)
+#   ATTEMPTS    attempts for each push, as registries answer 502 now and then (default: 3)
+#   RETRY_DELAY seconds between the attempts (default: 10)
 #
 # Requires yq (mikefarah, v4). Run add-helm-repos.sh first for charts with dependencies.
 
@@ -16,7 +18,22 @@ set -euo pipefail
 : "${REGISTRY:?REGISTRY must name the OCI registry and path, without oci://}"
 CHARTS_DIR="${CHARTS_DIR:-charts}"
 HELM="${HELM:-helm}"
+ATTEMPTS="${ATTEMPTS:-3}"
+RETRY_DELAY="${RETRY_DELAY:-10}"
 REGISTRY="${REGISTRY#oci://}"
+
+# retry <command>...: runs the command up to ATTEMPTS times, until it succeeds
+retry() {
+    local attempt=1
+    until "$@"; do
+        if [ "$attempt" -ge "$ATTEMPTS" ]; then
+            return 1
+        fi
+        echo "Attempt $attempt of $ATTEMPTS failed, retrying in ${RETRY_DELAY}s" >&2
+        sleep "$RETRY_DELAY"
+        attempt=$((attempt + 1))
+    done
+}
 
 if [ -z "${CHARTS:-}" ]; then
     CHARTS=""
@@ -40,5 +57,5 @@ for chart in $CHARTS; do
     echo "Pushing $name $version to $REGISTRY"
     "$HELM" dependency build "$chart_dir"
     "$HELM" package "$chart_dir" --destination "$package_dir"
-    "$HELM" push "$package_dir/$name-$version.tgz" "oci://$REGISTRY"
+    retry "$HELM" push "$package_dir/$name-$version.tgz" "oci://$REGISTRY"
 done

@@ -2,14 +2,13 @@
 
 Reusable GitHub Actions workflows shared by FIWARE repositories, so that a fix is made in one place.
 
-The repository lives in the SEAMWARE organization until it moves to FIWARE; callers then change the owner in `uses:`.
-
 | Workflow | What it does | Typical trigger |
 |---|---|---|
 | [`chart-lint.yml`](#chart-lint-chart-lintyml) | Lints the Helm charts and validates what they render | Pull requests |
 | [`chart-pr.yml`](#chart-version-chart-pryml) | Requires a semver label and bumps the versions of the changed charts | Pull requests |
 | [`chart-release.yml`](#chart-release-chart-releaseyml) | Publishes the charts, failing when a changed chart has no new version | Push to the main branch |
 | [`chart-dependencies.yml`](#chart-dependencies-chart-dependenciesyml) | Opens pull requests for newer chart dependencies | Schedule |
+| [`semver-version.yml`](#semver-version-semver-versionyml) | Works out the version to release from the semver label of the pull request | Pull requests and push to the main branch |
 | [`stale.yml`](#stale-issues-staleyml) | Marks and closes issues and pull requests without activity | Schedule |
 
 Together, the chart workflows cover the life of a chart: a pull request is linted and gets its new version, and merging it publishes that version.
@@ -21,7 +20,7 @@ Lints every chart under `charts/` (the directories with a `Chart.yaml`) with `he
 ```yaml
 jobs:
   chart-lint:
-    uses: SEAMWARE/github-workflows/.github/workflows/chart-lint.yml@v1
+    uses: FIWARE/github-workflows/.github/workflows/chart-lint.yml@v1
 ```
 
 | Input | Default | Description |
@@ -59,7 +58,7 @@ jobs:
 
   chart-version:
     needs: [lint]                # whatever has to pass first
-    uses: SEAMWARE/github-workflows/.github/workflows/chart-pr.yml@v1
+    uses: FIWARE/github-workflows/.github/workflows/chart-pr.yml@v1
     permissions:
       contents: write            # push the new versions to the pull request branch
       pull-requests: write       # comment when the label is missing
@@ -71,6 +70,7 @@ Inputs, both optional:
 |---|---|---|
 | `charts-dir` | `charts` | Directory that holds one directory per chart |
 | `exclude` | `<charts-dir>/README.md` | Space-separated paths that never count as a chart change |
+| `helm-docs-version` | (none) | Version of the [`jnorwood/helm-docs`](https://github.com/norwoodj/helm-docs) image, e.g. `v1.14.2`. When set, the `README.md` of every chart the pull request changes is regenerated after the bump and pushed with it. Other charts are left alone: regenerating a stale one would change it without a new version |
 
 Pushes made with the workflow token do not trigger workflows, so the checks of the pull request keep running on the commit before the version bump.
 
@@ -80,7 +80,7 @@ Publishes the charts when the main branch changes:
 
 1. **checks the versions first**: a chart that the push changed without changing its version fails the workflow, naming it, before anything is published. Such a change would otherwise never be released, since the version is already published;
 2. publishes every chart version that is not released yet as a GitHub release, and updates the Helm repository index on GitHub Pages, with [chart-releaser](https://github.com/helm/chart-releaser-action);
-3. optionally, pushes them to an OCI registry, each version once.
+3. optionally, pushes them to an OCI registry, each version once, retrying a push that fails.
 
 The repositories the charts' dependencies come from are added from their `Chart.yaml`.
 
@@ -91,7 +91,7 @@ on:
 
 jobs:
   chart-release:
-    uses: SEAMWARE/github-workflows/.github/workflows/chart-release.yml@v1
+    uses: FIWARE/github-workflows/.github/workflows/chart-release.yml@v1
     permissions:
       contents: write
     with:
@@ -121,7 +121,7 @@ on:
 
 jobs:
   chart-dependencies:
-    uses: SEAMWARE/github-workflows/.github/workflows/chart-dependencies.yml@v1
+    uses: FIWARE/github-workflows/.github/workflows/chart-dependencies.yml@v1
     permissions:
       contents: write
       pull-requests: write
@@ -137,6 +137,45 @@ jobs:
 
 The chart version is bumped in the pull request itself because pull requests opened with the workflow token do not run their checks, `chart-pr.yml` included. To have the checks run, pass a GitHub App or personal token as the `token` secret.
 
+## Semver version (`semver-version.yml`)
+
+For repositories that release an application, not charts, with the version driven by the semver label of the pull request. It works out the version and leaves the build and the release to the caller:
+
+- on a pull request, it requires exactly one of the labels `major`, `minor` or `patch`, commenting on the pull request when it is missing, and returns `X.Y.Z-PRE-<pull request number>`;
+- on a push to the main branch, it reads the label of the pull request the pushed commit was merged from, and returns `X.Y.Z`. A commit that no merged pull request contains, or one merged without a label, fails.
+
+`X.Y.Z` is the highest release tag bumped by the label. Release tags are `<tag-prefix>X.Y.Z`; other tags, such as pre-releases (`1.2.3-PRE-4`), are ignored.
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  generate-version:
+    uses: FIWARE/github-workflows/.github/workflows/semver-version.yml@v1
+    permissions:
+      contents: read
+      pull-requests: write       # comment when the label is missing
+    with:
+      tag-prefix: ""             # tags like 1.2.3
+
+  build-and-push:
+    needs: generate-version
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Building ${{ needs.generate-version.outputs.version }}"
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `tag-prefix` | `v` | Text the release tags start with; empty for tags like `1.2.3` |
+
+| Output | Description |
+|---|---|
+| `version` | `X.Y.Z` on a push, `X.Y.Z-PRE-<pull request number>` on a pull request |
+| `bump` | `major`, `minor` or `patch`, from the label |
+
 ## Stale issues (`stale.yml`)
 
 Marks issues and pull requests without activity as stale, and closes them when they stay so, with [actions/stale](https://github.com/actions/stale).
@@ -149,7 +188,7 @@ on:
 
 jobs:
   stale:
-    uses: SEAMWARE/github-workflows/.github/workflows/stale.yml@v1
+    uses: FIWARE/github-workflows/.github/workflows/stale.yml@v1
     permissions:
       issues: write
       pull-requests: write

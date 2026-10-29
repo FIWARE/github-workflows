@@ -58,3 +58,19 @@ setup() {
     BUMP=huge run "$SCRIPT"
     [ "$status" -ne 0 ]
 }
+
+@test "TAG_PREFIX selects the release tags" {
+    git tag v9.0.0
+    git tag release-1.2.0
+    TAG_PREFIX=release- BUMP=patch run "$SCRIPT"
+    [ "$output" = 1.2.1 ]
+}
+
+@test "an empty TAG_PREFIX reads tags without a prefix and ignores pre-releases" {
+    git tag v9.0.0
+    git tag 1.8.4
+    git tag 1.8.5-PRE-34
+    git tag 1.10.0
+    TAG_PREFIX= BUMP=patch run "$SCRIPT"
+    [ "$output" = 1.10.1 ]
+}

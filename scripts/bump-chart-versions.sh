@@ -14,7 +14,8 @@
 #   CHARTS_DIR       directory that holds one directory per chart (default: charts)
 #   EXCLUDE          space-separated paths that never count as a chart change
 #                    (default: $CHARTS_DIR/README.md)
-#   GITHUB_OUTPUT    when set, receives committed=true|false and the bumped charts
+#   GITHUB_OUTPUT    when set, receives committed=true|false, the bumped charts and the changed
+#                    charts (changed=, also the ones whose version was already right)
 #
 # Requires git and yq (mikefarah, v4).
 
@@ -53,8 +54,11 @@ while IFS= read -r file; do
     esac
 done < <(git diff --name-only "$base...HEAD")
 
+changed=$(printf '%s\n' "${!charts[@]}" | sort | xargs)
+output "changed=$changed"
+
 bumped=()
-for chart in $(printf '%s\n' "${!charts[@]}" | sort); do
+for chart in $changed; do
     chart_file="$CHARTS_DIR/$chart/Chart.yaml"
     if [ ! -f "$chart_file" ]; then
         echo "$chart has no Chart.yaml on the branch, skipping"
