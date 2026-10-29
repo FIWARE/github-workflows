@@ -28,11 +28,17 @@ jobs:
     outputs:
       bump: ${{ steps.label.outputs.bump }}
     steps:
+      # The labels the pull request has now, not the ones of the event that started the run: a pull
+      # request opened with a label (gh pr create --label) gets it right after the `opened` event, and
+      # the `labeled` event of the workflow token starts no run. Reading them now also lets a re-run
+      # pick up a label added later.
       - name: Read the semver label
         id: label
         env:
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
+          LABELS=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '[.labels[].name]')
           bumps=$(jq -r '[.[] | select(. == "major" or . == "minor" or . == "patch")] | join(" ")' <<< "$LABELS")
           if [ "$(wc -w <<< "$bumps")" -ne 1 ]; then
             echo "::error::The pull request needs exactly one of the labels major, minor or patch (found: ${bumps:-none})"
