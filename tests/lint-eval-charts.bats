@@ -76,3 +76,95 @@ EOF
     [ "$status" -eq 1 ]
     [[ "$output" == *"Evaluating charts/good with extra-values.yaml"* ]]
 }
+
+# crd <chart> [<extra string property>]
+# gives the chart a CRD for widgets.example.test, whose spec takes a "size" integer and, when
+# asked for, one more string property. The group is not in the CRDs catalog, so a widget can only
+# validate against the CRD the chart itself ships.
+crd() {
+    local extra=""
+    [ -z "${2:-}" ] || extra=$(printf '\n                %s:\n                  type: string' "$2")
+    mkdir -p "charts/$1/crds"
+    cat > "charts/$1/crds/widget.yaml" <<EOF
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.test
+spec:
+  group: example.test
+  names:
+    kind: Widget
+    plural: widgets
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                size:
+                  type: integer$extra
+EOF
+}
+
+# widget <chart> <spec body>
+widget() {
+    cat > "charts/$1/templates/widget.yaml" <<EOF
+apiVersion: example.test/v1
+kind: Widget
+metadata:
+  name: widget
+spec:
+$2
+EOF
+}
+
+@test "a custom resource is validated against the CRD its own chart ships" {
+    crd good
+    widget good "  size: 3"
+    run "$EVAL"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Chart evaluation successful"* ]]
+}
+
+@test "a custom resource that the chart's own CRD rejects fails" {
+    crd good
+    widget good "  size: big"
+    run "$EVAL"
+    [ "$status" -eq 1 ]
+}
+
+@test "a property the chart's CRD adds is accepted, where the catalog alone would reject it" {
+    crd good colour
+    widget good "  size: 3
+  colour: red"
+    run "$EVAL"
+    [ "$status" -eq 0 ]
+}
+
+@test "a crds directory that is not a chart's own is ignored" {
+    # opentelemetry-operator keeps Helm templates in conf/crds; they are not parseable YAML and
+    # must not be read as CRDs
+    mkdir -p charts/good/conf/crds
+    echo '{{- if .Values.x }}' > charts/good/conf/crds/templated.yaml
+    run "$EVAL"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"bad file"* ]]
+}
+
+@test "the CRDs a dependency ships are read from the archive helm builds" {
+    chart dep 1.0.0
+    crd dep
+    # the widget is in the chart that depends on dep, so its schema can only come from the
+    # dep-1.0.0.tgz that helm dependency build puts in charts/user/charts
+    chart user 1.0.0 dep 1.0.0 "file://../dep"
+    widget user "  size: 3"
+    run "$EVAL"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Chart evaluation successful"* ]]
+}
