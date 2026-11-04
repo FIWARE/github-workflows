@@ -15,7 +15,8 @@
 #   CHARTS_DIR   directory that holds one directory per chart (default: charts)
 #   HELM         helm binary (default: helm)
 #   KUBECONFORM  kubeconform binary (default: kubeconform)
-#   YQ           yq binary (mikefarah, v4; default: yq)
+#   YQ           yq binary (mikefarah v4.45.1 or newer - an older one cannot parse the query that
+#                reads the CRD versions, and v4.35.2 rejects it outright; default: yq)
 #
 # Run add-helm-repos.sh first for charts with dependencies.
 
@@ -41,7 +42,7 @@ trap 'rm -rf "$workdir"' EXIT
 # crds/, and a dependency that is already unpacked, are read where they are.
 write_crd_schemas() {
     local chart=$1 schema_dir=$2 unpack_dir=$3
-    local archive crd doc group kind index version
+    local archive crd entries doc group kind index version
 
     # one line "<document> <group> <kind> <version index> <version>" per schema to write.
     # shellcheck disable=SC2016 # $crd is a yq variable, not a shell one
@@ -58,14 +59,18 @@ write_crd_schemas() {
         tar -xzf "$archive" -C "$unpack_dir" || return 1
     done
 
+    # the query is read into a variable rather than piped in: the exit status of a process
+    # substitution is lost, and an unreadable CRD would then leave no schema and silently send
+    # kubeconform back to the catalog - the very failure this works around
     while IFS= read -r crd; do
+        entries=$("$YQ" e -N "$versions_query" "$crd") || return 1
         while read -r doc group kind index version; do
             [ -n "${version:-}" ] || continue
             mkdir -p "$schema_dir/$group"
             "$YQ" e -N -o=json \
                 "select(documentIndex == $doc) | .spec.versions[$index].schema.openAPIV3Schema" \
                 "$crd" > "$schema_dir/$group/${kind,,}_$version.json" || return 1
-        done < <("$YQ" e -N "$versions_query" "$crd")
+        done <<< "$entries"
     done < <(crd_files "$chart" "$unpack_dir")
 }
 

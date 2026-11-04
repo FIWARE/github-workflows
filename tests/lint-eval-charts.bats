@@ -157,6 +157,16 @@ EOF
     [[ "$output" != *"bad file"* ]]
 }
 
+@test "a CRD that cannot be read fails, instead of falling back to the catalog" {
+    crd good
+    widget good "  size: 3"
+    # a yq that fails stands for an unparseable CRD, or one a yq too old for the query chokes on:
+    # the schema is then missing, and the resource must not simply be validated without it
+    YQ=false run "$EVAL"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Could not read the CRDs of charts/good"* ]]
+}
+
 @test "the CRDs a dependency ships are read from the archive helm builds" {
     chart dep 1.0.0
     crd dep

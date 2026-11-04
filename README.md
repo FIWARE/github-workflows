@@ -30,6 +30,7 @@ jobs:
 | `charts-dir` | `charts` | Directory that holds one directory per chart |
 | `helm-version` | `v3.17.3` | Helm version |
 | `kubeconform-version` | `v0.7.0` | kubeconform version |
+| `yq-version` | `v4.54.1` | yq version the CRDs of a chart are read with (mikefarah v4.45.1 or newer) |
 
 ## Chart version (`chart-pr.yml`)
 
