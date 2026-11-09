@@ -15,7 +15,9 @@ Together, the chart workflows cover the life of a chart: a pull request is linte
 
 ## Chart lint (`chart-lint.yml`)
 
-Lints every chart under `charts/` (the directories with a `Chart.yaml`) with `helm lint`, then builds its dependencies, renders it and validates the result with `kubeconform -strict`, against the Kubernetes schemas and the [CRDs catalog](https://github.com/datreeio/CRDs-catalog). Each `<chart>/ci/*-values.yaml` is rendered and validated as well, to cover what the default values leave off; with those, custom resources that are not in the catalog are skipped. Every chart is checked before the result is reported.
+Lints every chart under `charts/` (the directories with a `Chart.yaml`) with `helm lint`, then builds its dependencies, renders it and validates the result with `kubeconform -strict` against the Kubernetes schemas. Each `<chart>/ci/*-values.yaml` is rendered and validated as well, to cover what the default values leave off. Every chart is checked before the result is reported.
+
+A custom resource is validated against the CRD the chart itself ships — its own `crds/` and those of its dependencies — and, for a kind that no CRD in the chart defines, against the [CRDs catalog](https://github.com/datreeio/CRDs-catalog); with the ci values, a kind in neither is skipped. The chart's own CRD comes first because it is the authority for its custom resources: the catalog is generated from whichever CRD version it was last refreshed with, so a field that the operator a chart deploys accepts today can be rejected by a schema built from an older one.
 
 ```yaml
 jobs:
@@ -28,6 +30,7 @@ jobs:
 | `charts-dir` | `charts` | Directory that holds one directory per chart |
 | `helm-version` | `v3.17.3` | Helm version |
 | `kubeconform-version` | `v0.7.0` | kubeconform version |
+| `yq-version` | `v4.54.1` | yq version the CRDs of a chart are read with (mikefarah v4.45.1 or newer) |
 
 ## Chart version (`chart-pr.yml`)
 
