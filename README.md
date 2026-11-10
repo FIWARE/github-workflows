@@ -183,7 +183,7 @@ jobs:
 
 ## GitHub release (`github-release.yml`)
 
-Publishes a GitHub release of a version, tagging the commit the run is for, with notes generated from the merged pull requests. It pairs with `semver-version.yml`:
+Publishes a GitHub release of a version, tagging the commit the run is for, with notes generated from the pull requests merged since the previous release of the same series (the highest `<prefix>X.Y.Z` tag below the version, so a chart release of the same repository, `<chart>-X.Y.Z`, is not taken as the start). It pairs with `semver-version.yml`:
 
 - a **pre-release** replaces the release and the tag of the same name, so a pull request publishes its `X.Y.Z-PRE-<number>` again on every push;
 - a **release** never replaces one: a version that already exists fails the job.
