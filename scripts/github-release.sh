@@ -3,7 +3,11 @@
 #
 # A pre-release replaces the release and the tag of the same name, if there are any: a pull request
 # publishes the same X.Y.Z-PRE-<number> on every push. A release refuses to replace one: a version,
-# once released, does not change. The release notes are generated from the merged pull requests.
+# once released, does not change. The release notes are generated from the pull requests merged
+# since the previous release of the same series: the highest <prefix>X.Y.Z tag below the version,
+# where <prefix> is whatever precedes the version number (v in v1.2.3, nothing in 1.2.3). Without
+# it, GitHub would start from its latest release, which can be one of another series, such as a
+# chart release (<chart>-X.Y.Z) of the same repository.
 #
 # Environment:
 #   VERSION     tag and name of the release (required)
@@ -12,6 +16,8 @@
 #   TITLE       title of the release (default: VERSION)
 #   FILES       newline- or space-separated globs of the files to attach, relative to the current
 #               directory; a glob that matches nothing fails
+#   NOTES_START_TAG  tag the release notes start from (default: the previous release, see above;
+#               none when there is no previous one)
 #   REPOSITORY  owner/repo (default: $GITHUB_REPOSITORY)
 #   GH          gh binary (default: gh)
 
@@ -70,7 +76,34 @@ if [ "$release_exists" = true ] || [ "$tag_exists" = true ]; then
     fi
 fi
 
+# previous_release <version>: the highest <prefix>X.Y.Z tag of the repository below the X.Y.Z of the
+# version, or nothing
+previous_release() {
+    local version=$1 prefix number
+    prefix="${version%%[0-9]*}"
+    number="${version#"$prefix"}"
+    number="${number%%[-+]*}"
+    "$GH" api --paginate "repos/$REPOSITORY/tags" --jq '.[].name' \
+        | while IFS= read -r tag; do
+            case "$tag" in "$prefix"*) ;; *) continue ;; esac
+            candidate="${tag#"$prefix"}"
+            [[ "$candidate" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+            # keep the candidates below the version
+            if [ "$(printf '%s\n%s\n' "$candidate" "$number" | sort -t. -k1,1n -k2,2n -k3,3n | head -n 1)" = "$candidate" ] \
+                && [ "$candidate" != "$number" ]; then
+                echo "$candidate"
+            fi
+        done \
+        | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1 | sed "s/^/$prefix/"
+}
+
+NOTES_START_TAG="${NOTES_START_TAG-$(previous_release "$VERSION")}"
+
 args=(release create "$VERSION" --repo "$REPOSITORY" --target "$TARGET" --title "$TITLE" --generate-notes)
+if [ -n "$NOTES_START_TAG" ]; then
+    echo "Release notes start from $NOTES_START_TAG"
+    args+=(--notes-start-tag "$NOTES_START_TAG")
+fi
 if [ "$PRERELEASE" = true ]; then
     args+=(--prerelease)
 fi
