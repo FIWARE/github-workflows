@@ -1,0 +1,83 @@
+# Reusable workflow that publishes a GitHub release or pre-release of a version, tagging the commit
+# the run is for. A pre-release replaces the one of the same name, so a pull request can publish its
+# X.Y.Z-PRE-<number> on every push; a release never replaces one. See README.md for how to call it.
+name: GitHub release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Tag and name of the release, e.g. the version output of semver-version.yml
+        type: string
+        required: true
+      prerelease:
+        description: Publish a pre-release
+        type: boolean
+        default: false
+      title:
+        description: Title of the release (default the version)
+        type: string
+        default: ""
+      target:
+        description: Commit to tag (default the commit the run is for)
+        type: string
+        default: ""
+      files:
+        description: Newline-separated globs of the files to attach, relative to the repository root
+        type: string
+        default: ""
+      artifact-pattern:
+        description: Artifacts of the same run to download into release-assets/ before attaching the files
+        type: string
+        default: ""
+
+jobs:
+  release:
+    name: GitHub release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ inputs.target || github.sha }}
+          persist-credentials: false
+
+      # the script from the same commit as this workflow, not from the caller's repository
+      - name: Locate this workflow
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$WORKFLOW_REPOSITORY" ] || [ -z "$WORKFLOW_SHA" ]; then
+            echo "::error::job.workflow_repository and job.workflow_sha are empty: this workflow has to run as a reusable workflow on github.com"
+            exit 1
+          fi
+          echo "Using $WORKFLOW_REPOSITORY@$WORKFLOW_SHA"
+
+      - name: Check out the release script
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .github-workflows
+          persist-credentials: false
+
+      - name: Download the artifacts to attach
+        if: inputs.artifact-pattern != ''
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          path: release-assets
+          pattern: ${{ inputs.artifact-pattern }}
+          merge-multiple: true
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ inputs.target || github.sha }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          TITLE: ${{ inputs.title }}
+          FILES: ${{ inputs.files }}
+        run: .github-workflows/scripts/github-release.sh

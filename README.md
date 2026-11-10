@@ -9,6 +9,7 @@ Reusable GitHub Actions workflows shared by FIWARE repositories, so that a fix i
 | [`chart-release.yml`](#chart-release-chart-releaseyml) | Publishes the charts, failing when a changed chart has no new version | Push to the main branch |
 | [`chart-dependencies.yml`](#chart-dependencies-chart-dependenciesyml) | Opens pull requests for newer chart dependencies | Schedule |
 | [`semver-version.yml`](#semver-version-semver-versionyml) | Works out the version to release from the semver label of the pull request | Pull requests and push to the main branch |
+| [`github-release.yml`](#github-release-github-releaseyml) | Publishes a GitHub release or pre-release of a version | Pull requests and push to the main branch |
 | [`stale.yml`](#stale-issues-staleyml) | Marks and closes issues and pull requests without activity | Schedule |
 
 Together, the chart workflows cover the life of a chart: a pull request is linted and gets its new version, and merging it publishes that version.
@@ -145,7 +146,7 @@ The chart version is bumped in the pull request itself because pull requests ope
 For repositories that release an application, not charts, with the version driven by the semver label of the pull request. It works out the version and leaves the build and the release to the caller:
 
 - on a pull request, it requires exactly one of the labels `major`, `minor` or `patch` (read when the job runs, as in `chart-pr.yml`), commenting on the pull request when it is missing, and returns `X.Y.Z-PRE-<pull request number>`;
-- on a push to the main branch, it reads the label of the pull request the pushed commit was merged from, and returns `X.Y.Z`. A commit that no merged pull request contains, or one merged without a label, fails.
+- on a push to the main branch, it reads the label of the pull request the pushed commit was merged from, and returns `X.Y.Z`. A commit that no merged pull request contains, or one merged without a label, fails, unless `default-bump` says how to release it.
 
 `X.Y.Z` is the highest release tag bumped by the label. Release tags are `<tag-prefix>X.Y.Z`; other tags, such as pre-releases (`1.2.3-PRE-4`), are ignored.
 
@@ -173,11 +174,52 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `tag-prefix` | `v` | Text the release tags start with; empty for tags like `1.2.3` |
+| `default-bump` | (none) | `major`, `minor` or `patch` for a push that no labelled pull request carries; without it, such a push fails |
 
 | Output | Description |
 |---|---|
 | `version` | `X.Y.Z` on a push, `X.Y.Z-PRE-<pull request number>` on a pull request |
 | `bump` | `major`, `minor` or `patch`, from the label |
+
+## GitHub release (`github-release.yml`)
+
+Publishes a GitHub release of a version, tagging the commit the run is for, with notes generated from the merged pull requests. It pairs with `semver-version.yml`:
+
+- a **pre-release** replaces the release and the tag of the same name, so a pull request publishes its `X.Y.Z-PRE-<number>` again on every push;
+- a **release** never replaces one: a version that already exists fails the job.
+
+```yaml
+jobs:
+  generate-version:
+    uses: FIWARE/github-workflows/.github/workflows/semver-version.yml@v1
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      tag-prefix: ""
+
+  git-release:
+    needs: [generate-version, build]
+    uses: FIWARE/github-workflows/.github/workflows/github-release.yml@v1
+    permissions:
+      contents: write
+    with:
+      version: ${{ needs.generate-version.outputs.version }}
+      prerelease: ${{ github.event_name == 'pull_request' }}
+      files: |
+        LICENSE
+        release-assets/my-binary-*
+      artifact-pattern: my-binary-*      # artifacts of this run, downloaded into release-assets/
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `version` | (required) | Tag and name of the release |
+| `prerelease` | `false` | Publish a pre-release |
+| `title` | the version | Title of the release |
+| `target` | the commit of the run | Commit to tag |
+| `files` | (none) | Newline-separated globs of the files to attach, relative to the repository root; a glob that matches nothing fails |
+| `artifact-pattern` | (none) | Artifacts of the same run to download into `release-assets/` first |
 
 ## Stale issues (`stale.yml`)
 
@@ -211,8 +253,8 @@ Callers use the `v1` tag, which moves with every compatible release (`v1.0.1`, `
 Every pull request to this repository needs one of the labels `major`, `minor` or `patch`. When it is merged, `release.yml`:
 
 1. takes the highest `vX.Y.Z` tag and bumps it by the label;
-2. tags the merge commit with the new `vX.Y.Z` and moves the major tag (`vX`) to it. A `major` release creates the next major tag and leaves the previous one where it was, so its callers keep working;
-3. publishes a GitHub release with notes generated from the merged pull requests.
+2. publishes the GitHub release `vX.Y.Z` of the merge commit with this repository's own `github-release.yml`, so every release also exercises it;
+3. moves the major tag (`vX`) to it. A `major` release creates the next major tag and leaves the previous one where it was, so its callers keep working.
 
 A pull request merged without a label is not released, and the workflow fails saying so. The first release, or any release no pull request carries, is made by running the Release workflow by hand on `main` with the version (`X.Y.Z`).
 

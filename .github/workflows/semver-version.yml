@@ -11,6 +11,12 @@ on:
         description: Text the release tags start with (default v); empty for tags like 1.2.3
         type: string
         default: v
+      default-bump:
+        description: >-
+          major, minor or patch for a push that no labelled pull request carries; empty (the default)
+          fails such a push instead
+        type: string
+        default: ""
     outputs:
       version:
         description: X.Y.Z on a push, X.Y.Z-PRE-<pull request number> on a pull request
@@ -62,30 +68,14 @@ jobs:
       # chart-pr.yml). On a push, the labels of the pull request the pushed commit was merged from.
       - name: Read the semver label
         id: label
+        working-directory: repo
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           PR: ${{ github.event.pull_request.number }}
           SHA: ${{ github.sha }}
-        run: |
-          if [ "$EVENT" = pull_request ]; then
-            labels=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '[.labels[].name]')
-          else
-            pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" \
-              --jq '[.[] | select(.merged_at != null)][0] // empty | {number, labels: [.labels[].name]}')
-            if [ -z "$pr" ]; then
-              echo "::error::No merged pull request contains $SHA, so there is no semver label to release it with"
-              exit 1
-            fi
-            echo "Releasing pull request #$(jq -r .number <<< "$pr")"
-            labels=$(jq -c .labels <<< "$pr")
-          fi
-          bumps=$(jq -r '[.[] | select(. == "major" or . == "minor" or . == "patch")] | join(" ")' <<< "$labels")
-          if [ "$(wc -w <<< "$bumps")" -ne 1 ]; then
-            echo "::error::The pull request needs exactly one of the labels major, minor or patch (found: ${bumps:-none})"
-            exit 1
-          fi
-          echo "bump=$bumps" >> "$GITHUB_OUTPUT"
+          DEFAULT_BUMP: ${{ inputs.default-bump }}
+        run: ../semver-workflows/scripts/semver-label.sh
 
       - name: Ask for the label
         if: failure() && steps.label.outcome == 'failure' && github.event_name == 'pull_request'
