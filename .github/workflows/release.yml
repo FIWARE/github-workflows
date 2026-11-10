@@ -22,13 +22,16 @@ concurrency:
   group: release
   cancel-in-progress: false
 
-permissions:
-  contents: write
-
 jobs:
-  release:
+  version:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      major: ${{ steps.version.outputs.major }}
+      target: ${{ steps.version.outputs.target }}
     steps:
       - name: Check out the merged commit
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -66,24 +69,40 @@ jobs:
             echo "::error::v$version already exists"
             exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "major=v${version%%.*}" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=v$version"
+            echo "major=v${version%%.*}"
+            echo "target=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
           echo "Releasing v$version"
 
-      - name: Tag the release
+  # the release workflow this repository offers, from this very commit
+  release:
+    needs: version
+    uses: ./.github/workflows/github-release.yml
+    permissions:
+      contents: write
+    with:
+      version: ${{ needs.version.outputs.version }}
+      target: ${{ needs.version.outputs.target }}
+
+  major-tag:
+    needs: [version, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the merged commit
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ needs.version.outputs.target }}
+
+      - name: Move the major tag to the release
         env:
-          VERSION: v${{ steps.version.outputs.version }}
-          MAJOR: ${{ steps.version.outputs.major }}
+          VERSION: ${{ needs.version.outputs.version }}
+          MAJOR: ${{ needs.version.outputs.major }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$VERSION" -m "$VERSION"
           git tag -f -a "$MAJOR" -m "$MAJOR, currently $VERSION"
-          git push origin "refs/tags/$VERSION"
           git push --force origin "refs/tags/$MAJOR"
-
-      - name: Publish the GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: v${{ steps.version.outputs.version }}
-        run: gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$VERSION"
