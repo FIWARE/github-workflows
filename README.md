@@ -37,7 +37,7 @@ jobs:
 
 For repositories that release Helm charts from a `charts/` directory, with the version of each chart driven by the semver label of the pull request that changes it. On every pull request it:
 
-1. requires exactly one of the labels `major`, `minor` or `patch`, and comments on the pull request when it is missing. The labels are read when the job runs, not from the event that started it, so a label added right after the pull request was opened counts, and re-running the job picks up a label added later;
+1. requires exactly one of the labels `major`, `minor` or `patch`, and comments on the pull request when it is missing. The labels are read when the job runs, not from the event that started it, so a label added right after the pull request was opened counts, and re-running the job picks up a label added later. The call to the GitHub API is retried, and when it keeps failing the job fails without asking for the label;
 2. bumps the `version` of every chart the pull request changes: its version on the base branch, bumped by the label. A chart that is not on the base branch yet keeps its version;
 3. commits the new versions ("Update helm chart versions") to the pull request branch. A pull request from a fork, which the workflow token cannot push to, fails instead, listing the versions its author has to set.
 

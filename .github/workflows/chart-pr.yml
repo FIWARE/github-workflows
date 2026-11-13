@@ -24,10 +24,30 @@ jobs:
     name: Semver label
     runs-on: ubuntu-latest
     permissions:
+      contents: read            # check out the label script
       pull-requests: write
     outputs:
       bump: ${{ steps.label.outputs.bump }}
     steps:
+      - name: Locate this workflow
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$WORKFLOW_REPOSITORY" ] || [ -z "$WORKFLOW_SHA" ]; then
+            echo "::error::job.workflow_repository and job.workflow_sha are empty: this workflow has to run as a reusable workflow on github.com"
+            exit 1
+          fi
+          echo "Using $WORKFLOW_REPOSITORY@$WORKFLOW_SHA"
+
+      - name: Check out the label script
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: chart-workflows
+          persist-credentials: false
+
       # The labels the pull request has now, not the ones of the event that started the run: a pull
       # request opened with a label (gh pr create --label) gets it right after the `opened` event, and
       # the `labeled` event of the workflow token starts no run. Reading them now also lets a re-run
@@ -36,18 +56,13 @@ jobs:
         id: label
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT: pull_request
           PR: ${{ github.event.pull_request.number }}
-        run: |
-          LABELS=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '[.labels[].name]')
-          bumps=$(jq -r '[.[] | select(. == "major" or . == "minor" or . == "patch")] | join(" ")' <<< "$LABELS")
-          if [ "$(wc -w <<< "$bumps")" -ne 1 ]; then
-            echo "::error::The pull request needs exactly one of the labels major, minor or patch (found: ${bumps:-none})"
-            exit 1
-          fi
-          echo "bump=$bumps" >> "$GITHUB_OUTPUT"
+        run: chart-workflows/scripts/semver-label.sh
 
+      # only when the label is the problem: a failure of the GitHub API is not the author's to fix
       - name: Ask for the label
-        if: failure() && steps.label.outcome == 'failure'
+        if: failure() && steps.label.outputs.label-missing == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
